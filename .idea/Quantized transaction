@@ -1,0 +1,133 @@
+import numpy as np
+import matplotlib.pyplot as mp
+import pandas as pd
+
+class StockPredictionModel:
+    def __init__(self,kdata):
+        self.kdata = kdata
+
+    def analysis(self):
+        result_dict = {
+            '趋势线':self.by_trendline(self.kdata[:20][::-1]),
+            '布林带':self.by_bool(self.kdata[::-1]),
+            '日均线': self.by_ma(self.kdata[::-1]),
+        }
+        return {'analysis_result':result_dict}
+    def by_trendline(self,kdata):
+        dates = kdata['date']
+        highest_prices = kdata['high']
+        lowest_prices = kdata['low']
+        closing_prices = kdata['close']
+        trend_points = (highest_prices+lowest_prices+closing_prices)/3
+        days = (pd.to_datetime(pd.Series(dates))-pd.to_datetime('1970')).dt.days
+        # print(days)
+        a = np.column_stack((days,np.ones_like(days)))
+        x = np.linalg.lstsq(a,trend_points,rcond=None)[0]
+        trend_k = x[0]
+        # 上涨趋势
+        if trend_k > 0 :
+            trend_points = lowest_prices
+            days = (pd.to_datetime(pd.Series(dates)) - pd.to_datetime('1970')).dt.days
+            a = np.column_stack((days, np.ones_like(days)))
+            x = np.linalg.lstsq(a,trend_points,rcond=None)[0]
+
+            last2daysx = days[-2:]
+            last2daysy = last2daysx * x[0] + x[1]
+            if np.all(np.array(closing_prices[-2:]) < np.array(last2daysy)):
+                return '上涨趋势下，最近两日跌破趋势线，建议卖出。'
+            else:
+                return '整体处于上涨趋势，建议继续持有。'
+        if trend_k < 0:  # 下跌趋势
+            trend_points = highest_prices
+            days = (pd.to_datetime(pd.Series(dates)) - pd.to_datetime('1970')).dt.days
+            a = np.column_stack((days, np.ones_like(days)))
+            x = np.linalg.lstsq(a, trend_points,rcond=None)[0]
+            last2daysx = days[-2:]
+            last2daysy = last2daysx * x[0] + x[1]
+            #print(closing_prices[-2:])
+            if np.all(np.array(closing_prices[-2:]) > np.array(last2daysy)):
+                return '下跌趋势下，最近三日冲破趋势线，建议买入。'
+            else:
+                return '整体处于下跌趋势，建议观察。'
+    def by_bool(self,kdata):
+        ma5 = kdata['ma5'].values
+        #上轨
+        stds = np.zeros(ma5.size-4)
+        cp = kdata['close'].values
+        # print(kdata['close'][0:5])
+        for i in range(0,stds.size):
+            stds[i] = kdata['close'][i:i+5].std()
+        # print(stds)
+        upper = ma5[4:] + 2*stds
+        # 下轨
+        lower = ma5[4:] - 2*stds
+        #穿透布林线
+        if np.all(cp[-2:-1] < lower[-2:-1] and cp[-1:] >= lower[-1:]) :
+            return '股价穿透布林带底部支撑线，建议买入。'
+        elif np.all(cp[-2:-1]>=upper[-1:] and cp[-2:-1] < upper[-1:]):
+            return '股价穿透布林带顶部压力线，建议卖出。'
+
+        #布林带中震荡
+        if np.all(cp[-4:-1]>ma5[-4:-1]) and np.all(cp[-1:]<ma5[-1:]):
+            return '股价持续在高位，向下穿透布林带中轨，建议卖出。'
+        elif np.all(cp[-4:-1]<ma5[-4:-1]) and np.all(cp[-1:]>=ma5[-1:]):
+            return '股价持续在低位，向上穿透布林带中轨，建议买入。'
+        else:
+            return '继续观望'
+        # s = (cp[-10:] > ma5[-10:]).sum()
+        # print(s)
+    def by_ma(self,kdata):
+        ma5 = kdata['ma5'].values
+        ma10 = kdata['ma10'].values
+        if np.all(ma5[-2:-1] < ma10[-2:-1] and ma5[-1:] >= ma10[-1:]):
+            return '建议买入。'
+        elif np.all(ma5[-2:-1] > ma10[-2:-1] and ma5[-1:] <= ma10[-1:]):
+            return '建议卖出。'
+        else:
+            return '继续观望'
+# def t():
+#     header = ['date', 'open', 'high', 'low', 'close', 'volume', 'ma5', 'ma10', 'ma20']
+#     kdata = pd.read_csv('k_data.csv')
+#     kdata = kdata[header][::-1]
+#     # print(kdata)
+#     a = StockPredictionModel(kdata)
+#     a.by_bool(kdata)
+# t()
+def test():
+    header = ['date','open','high','low','close','volume','ma5','ma10','ma20']
+    kdata = pd.read_csv('k_data.csv')
+    kdata = kdata[header]
+    # print(kdata)
+    buying_price = 0
+    selling_price = 0
+    share_num = 0
+    assets = 1000000
+    # 初始100天,一天一天回测
+    for i in range(kdata.shape[0]-100):
+        temp_kdata = kdata[-100-i:]
+        # print(temp_kdata)
+        model = StockPredictionModel(temp_kdata)
+        # model.by_trendline(temp_kdata)
+        r = model.analysis()
+        # print(temp_kdata)
+        if (assets>0) and (r['analysis_result']['趋势线'].endswith('建议买入。') or r['analysis_result']['布林带'].endswith(
+                '建议买入。') or r['analysis_result']['日均线'].endswith('建议买入。')):
+            buying_price = temp_kdata.iloc[0]['close']
+            share_num = assets/buying_price
+            assets = 0
+            print(temp_kdata.index[0],temp_kdata.iloc[0]['date'],'111',share_num,buying_price,assets)
+        elif (share_num>0) and ((r['analysis_result']['趋势线'].endswith('建议卖出。')  )):
+            selling_price = temp_kdata.iloc[0]['close']
+            assets += selling_price*share_num
+            share_num = 0
+            print(temp_kdata.index[0],temp_kdata.iloc[0]['date'],'222',share_num,selling_price,assets)
+        if (share_num>0)and(share_num*temp_kdata.iloc[0]['close']<share_num*buying_price*0.95):
+            assets = share_num*temp_kdata.iloc[0]['close']
+            share_num = 0
+            print(temp_kdata.index[0],temp_kdata.iloc[0]['date'],'333',share_num,temp_kdata.iloc[0]['close'],assets)
+    print('buying_price:', buying_price)
+    print('selling_price:', selling_price)
+    print('share_num:', share_num)
+    print('total_money:', assets)
+test()
+
